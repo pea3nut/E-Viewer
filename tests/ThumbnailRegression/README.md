@@ -10,7 +10,9 @@ On Windows with the repository's VS 2022 Build Tools and NuGet restore completed
 powershell -ExecutionPolicy Bypass -File tests/ThumbnailRegression/Run.ps1
 ```
 
-`-CompileOnly` checks compilation without running tests. `-Smoke` runs only four parser checks (offsets, shorthand ordering and quoted URL delimiters). Compilation treats warnings as errors. `-BuildTools` overrides `C:\BuildTools`.
+`-CompileOnly` checks compilation without running tests. `-Smoke` runs only four parser checks (offsets, shorthand ordering and quoted URL delimiters). Compilation treats warnings as errors. Roslyn is located alongside MSBuild on PATH (CI), falling back to `C:\BuildTools`; `-BuildTools` overrides this.
+
+The full console run also reads the 26 independent Chrome CSS geometry/rejection review cases in `parser-review-cases.json`. Thirteen supported valid cases must match exact URI/region, one unsupported size-reset combination must be safely rejected, and twelve invalid/unsupported cases must be rejected. The integer-overflow fixture uses `9223372036854775808px`, beyond `long`; `2147483648px` is representable in our signed/uint model and is correctly rejected by image bounds instead. CI runs this console suite once in the existing x64 build job; it never installs or runs the UWP host.
 
 The full suite covers first/middle/last and mixed-size regions, ordinary `<img>`, missing nodes, HTML entities, quotes, reordered/separate CSS declarations, zero offsets, invalid/missing/unsupported CSS, negative/out-of-bounds/overflow bounds, same-URI region invalidation, single-flight and retry, local-file precedence, stale publication rejection, shared downloads and bounded/failed cache behavior. Unsupported backgrounds produce placeholders, never an uncropped sheet.
 
