@@ -132,10 +132,10 @@ namespace ThumbnailRegression {
                 var file = await ApplicationData.Current.LocalFolder.CreateFileAsync("local-yellow.png", CreationCollisionOption.ReplaceExisting);
                 await FileIO.WriteBytesAsync(file, await EncodeAsync(BitmapEncoder.PngEncoderId, true));
                 state.SetFile(file);
+                tests.Check(state.TryBegin(out var request) && ReferenceEquals(request.File, file), "local StorageFile starts before pending remote completes");
                 var late = new BitmapImage();
                 await ThumbnailBitmap.LoadAsync(png, regions[0], late);
-                tests.Check(!state.Complete(remote, late, out var retry) && retry, "late remote BitmapImage cannot overwrite local source");
-                tests.Check(state.TryBegin(out var request) && ReferenceEquals(request.File, file), "local StorageFile selected before remote");
+                tests.Check(!state.Complete(remote, late, out var retry) && !retry, "late remote BitmapImage cannot overwrite local source");
                 var target = new BitmapImage();
                 using (var thumbnail = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, 180, ThumbnailOptions.ResizeThumbnail)) {
                     await target.SetSourceAsync(thumbnail);

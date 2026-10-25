@@ -40,6 +40,7 @@ namespace ExClient.Internal {
         }
         private void Invalidate() {
             version++;
+            active = null;
             result.SetTarget(null);
         }
         public bool TryGet(out T value) {

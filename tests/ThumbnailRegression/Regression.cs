@@ -84,22 +84,23 @@ namespace ThumbnailRegression {
             Check(state.TryBegin(out var remote) && !state.TryBegin(out _), "single-flight remote loading");
             var file = new object();
             state.SetFile(file);
-            Check(!state.Complete(remote, new object(), out var retry) && retry && !state.TryGet(out _), "late remote cannot publish over local file");
-            Check(state.TryBegin(out var local) && ReferenceEquals(local.File, file), "local file snapshot takes priority");
+            Check(state.TryBegin(out var local) && ReferenceEquals(local.File, file), "local loading starts without waiting for pending remote");
+            Check(!state.Complete(remote, new object(), out var retry) && !retry && !state.TryGet(out _), "late remote cannot publish over local file");
+            Check(!state.TryBegin(out _), "stale remote completion does not clear current local request");
             var localResult = new object();
             Check(state.Complete(local, localResult, out _) && state.TryGet(out var result) && ReferenceEquals(result, localResult), "current local result publishes");
             state.SetSource(middle);
             Check(!state.TryGet(out _) && state.Source.Equals(middle) && state.File == file, "same URI, changed region invalidates thumbnail but preserves local file");
             state.TryBegin(out var oldRegion);
             state.SetFile(null);
-            Check(!state.Complete(oldRegion, new object(), out retry) && retry, "late local result cannot publish after file removal");
+            Check(!state.Complete(oldRegion, new object(), out retry) && !retry, "late local result cannot publish after file removal");
             state.TryBegin(out var failed);
             Check(!state.Complete(failed, null, out retry) && !retry, "failed request clears single-flight state");
             Check(state.TryBegin(out var retried), "failed request can be retried");
             state.SetSource(first);
-            Check(!state.Complete(retried, new object(), out retry) && retry, "late source/region result cannot publish");
             state.TryBegin(out var current);
-            Check(current.Source.Equals(first) && current.File == null && state.Complete(current, new object(), out _), "new source may publish after stale request drains");
+            Check(!state.Complete(retried, new object(), out retry) && !retry, "late source/region result cannot publish or restart obsolete work");
+            Check(current.Source.Equals(first) && current.File == null && state.Complete(current, new object(), out _), "new source may publish without waiting for stale request");
         }
 
         private async Task TestCacheAsync() {
