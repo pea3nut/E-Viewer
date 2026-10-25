@@ -33,7 +33,7 @@ namespace ThumbnailRegression {
         protected override void OnLaunched(LaunchActivatedEventArgs args) {
             var panel = new StackPanel { Margin = new Thickness(24), Spacing = 12 };
             panel.Children.Add(new TextBlock { Text = "#179 — OFFLINE TESTHOST (not full E-Viewer)", FontSize = 24 });
-            panel.Children.Add(new TextBlock { Text = "Synthetic red / green / blue pages; first tile turns yellow on local switch." });
+            panel.Children.Add(new TextBlock { Text = "Synthetic red / green / blue pages; local yellow requires a Windows image thumbnail (icon fallback is SKIP).", TextWrapping = TextWrapping.Wrap });
             panel.Children.Add(run);
             panel.Children.Add(local);
             panel.Children.Add(status);
@@ -130,19 +130,33 @@ namespace ThumbnailRegression {
                 state.SetSource(new ThumbnailSource(new Uri("https://fixture.invalid/sheet.png"), regions[0]));
                 state.TryBegin(out var remote);
                 var file = await ApplicationData.Current.LocalFolder.CreateFileAsync("local-yellow.png", CreationCollisionOption.ReplaceExisting);
-                await FileIO.WriteBytesAsync(file, await EncodeAsync(BitmapEncoder.PngEncoderId, true));
+                var bytes = await EncodeAsync(BitmapEncoder.PngEncoderId, true);
+                await FileIO.WriteBytesAsync(file, bytes);
+                using (var input = new MemoryStream(bytes, false).AsRandomAccessStream())
+                    tests.Check(await HasYellowPixelsAsync(input), "local PNG fixture contains only yellow pixels");
                 state.SetFile(file);
                 tests.Check(state.TryBegin(out var request) && ReferenceEquals(request.File, file), "local StorageFile starts before pending remote completes");
                 var late = new BitmapImage();
                 await ThumbnailBitmap.LoadAsync(png, regions[0], late);
                 tests.Check(!state.Complete(remote, late, out var retry) && !retry, "late remote BitmapImage cannot overwrite local source");
+                tests.Check(!state.TryBegin(out _), "stale remote completion cannot release current local request");
                 var target = new BitmapImage();
+                var imageThumbnail = false;
                 using (var thumbnail = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, 180, ThumbnailOptions.ResizeThumbnail)) {
+                    tests.Check(thumbnail != null, "local GetThumbnailAsync returns a stream");
+                    Write("INFO local GetThumbnailAsync: Type=" + thumbnail.Type + ", ContentType=" + thumbnail.ContentType + ", Size=" + thumbnail.Size);
+                    imageThumbnail = thumbnail.Type == ThumbnailType.Image;
+                    if (imageThumbnail) {
+                        tests.Check(await HasYellowPixelsAsync(thumbnail), "local Windows image thumbnail contains yellow pixels");
+                        thumbnail.Seek(0);
+                    } else {
+                        Write("SKIP local yellow-image pixels: Windows returned an Icon thumbnail, not image content; local/state publication checks are separate.");
+                    }
                     await target.SetSourceAsync(thumbnail);
                 }
-                tests.Check(state.Complete(request, target, out _) && state.TryGet(out var current) && ReferenceEquals(current, target), "local GetThumbnailAsync BitmapImage published");
+                tests.Check(state.Complete(request, target, out _) && state.TryGet(out var current) && ReferenceEquals(current, target), "local GetThumbnailAsync result published (not an image-content assertion)");
                 ((Image)images.Children[0]).Source = target;
-                status.Text = "PASS: local-first switch; late remote discarded. Reload restores three sprite tiles.";
+                status.Text = "PASS: " + tests.Checks + " local/state checks; " + (imageThumbnail ? "yellow image verified." : "SKIP local image pixels: Windows returned Icon.") + " Reload restores RGB.";
                 Write(status.Text);
             } catch (Exception error) {
                 status.Text = "FAIL: " + error.Message;
@@ -151,6 +165,15 @@ namespace ThumbnailRegression {
                 await SaveAsync();
                 run.IsEnabled = local.IsEnabled = true;
             }
+        }
+
+        private static async Task<bool> HasYellowPixelsAsync(IRandomAccessStream stream) {
+            var decoder = await BitmapDecoder.CreateAsync(stream);
+            var pixels = (await decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+                new BitmapTransform(), ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage)).DetachPixelData();
+            return pixels.Length != 0 && Enumerable.Range(0, pixels.Length / 4).All(i =>
+                Math.Abs(pixels[i * 4] - 20) <= 12 && Math.Abs(pixels[i * 4 + 1] - 220) <= 12
+                && Math.Abs(pixels[i * 4 + 2] - 230) <= 12 && pixels[i * 4 + 3] == 255);
         }
 
         private static async Task<byte[]> EncodeAsync(Guid encoderId, bool local = false) {
