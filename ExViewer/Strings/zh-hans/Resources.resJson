@@ -311,6 +311,7 @@
       "ToplistsHeaderTextBlock/Text": "排行榜"
     },
     "LogOnDialog": {
+      "InstallWebView2Button/Content": "安装 Microsoft Edge WebView2 运行时",
       "IgneousTextBox/Header": "\"igneous\" cookie 的值（可选）",
       "LogOnButtonText": "登录",
       "MemberIdTextBox/Header": "\"ipb_member_id\" cookie 的值",
@@ -319,7 +320,8 @@
       "ResetButtonText": "重置",
       "TitleTextBlock/Text": "登录",
       "UseCookieButton/Content": "使用 cookie 登录",
-      "UseWebpageButton/Content": "使用网页登录"
+      "UseWebpageButton/Content": "使用网页登录",
+      "WebViewUnavailableMessage": "网页登录需要 Microsoft Edge WebView2 运行时。请安装后重新打开登录窗口，或使用 Cookie 登录。"
     },
     "PopularPage": {
       "LoadingMoreTextBlock/Text": "正在加载热门画廊…",

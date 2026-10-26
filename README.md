@@ -30,6 +30,9 @@ Please download `.appx` file to install.
 
 ## FAQ
 
+Webpage login requires the [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+If the runtime is unavailable or the website's browser verification cannot complete, cookie login remains available.
+
 1. [How to install](https://github.com/OpportunityLiu/E-Viewer/wiki/How-to-Install)
 
 2. [How to enable network proxy for UWP applications](https://github.com/OpportunityLiu/E-Viewer/wiki/Resolve-Connection-Issues)

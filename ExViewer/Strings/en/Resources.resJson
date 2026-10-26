@@ -311,6 +311,7 @@
       "ToplistsHeaderTextBlock/Text": "Toplists"
     },
     "LogOnDialog": {
+      "InstallWebView2Button/Content": "Install Microsoft Edge WebView2 Runtime",
       "IgneousTextBox/Header": "Cookie value of \"igneous\" (optional)",
       "LogOnButtonText": "Log on",
       "MemberIdTextBox/Header": "Cookie value of \"ipb_member_id\"",
@@ -319,7 +320,8 @@
       "ResetButtonText": "Reset",
       "TitleTextBlock/Text": "LOG ON",
       "UseCookieButton/Content": "Use cookie log on",
-      "UseWebpageButton/Content": "Use webpage log on"
+      "UseWebpageButton/Content": "Use webpage log on",
+      "WebViewUnavailableMessage": "Webpage login requires Microsoft Edge WebView2 Runtime. Install it and reopen this dialog, or use cookie login."
     },
     "PopularPage": {
       "LoadingMoreTextBlock/Text": "Loading popular galleries…",

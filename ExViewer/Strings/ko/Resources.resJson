@@ -311,6 +311,7 @@
       "ToplistsHeaderTextBlock/Text": "상위 목록"
     },
     "LogOnDialog": {
+      "InstallWebView2Button/Content": "Microsoft Edge WebView2 런타임 설치",
       "IgneousTextBox/Header": "\"igneous\"의 쿠키값 (선택사항)",
       "LogOnButtonText": "로그인",
       "MemberIdTextBox/Header": "\"ipb_member_id\"의 쿠키값",
@@ -319,7 +320,8 @@
       "ResetButtonText": "재설정",
       "TitleTextBlock/Text": "로그인",
       "UseCookieButton/Content": "쿠키 로그인 사용",
-      "UseWebpageButton/Content": "웹 페이지 로그인 사용"
+      "UseWebpageButton/Content": "웹 페이지 로그인 사용",
+      "WebViewUnavailableMessage": "웹 페이지 로그인에는 Microsoft Edge WebView2 런타임이 필요합니다. 설치 후 로그인 창을 다시 열거나 쿠키 로그인을 사용하세요."
     },
     "PopularPage": {
       "LoadingMoreTextBlock/Text": "인기 있는 갤러리 불러오는 중…",

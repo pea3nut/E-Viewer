@@ -1,19 +1,18 @@
 ﻿using ExClient;
 using ExViewer.Controls;
-using Microsoft.Toolkit.Uwp.UI.Extensions;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.Web.WebView2.Core;
+using Newtonsoft.Json;
 using Opportunity.MvvmUniverse;
 using Opportunity.MvvmUniverse.Commands;
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Windows.Foundation;
-using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Input;
-using Windows.UI.Xaml.Media;
-using static ExViewer.Helpers.HtmlHelper;
 
 // “内容对话框”项模板在 http://go.microsoft.com/fwlink/?LinkId=234238 上进行了说明
 
@@ -24,18 +23,6 @@ namespace ExViewer.Views
         public LogOnDialog()
         {
             InitializeComponent();
-            VM.PropertyChanged += VM_PropertyChanged;
-        }
-
-        private void VM_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(VM.ShowErrorMsg) || e.PropertyName == nameof(VM.ErrorMsg))
-            {
-                if (VM.ShowErrorMsg && !string.IsNullOrEmpty(VM.ErrorMsg))
-                {
-                    showErrorMsgInWv(VM.ErrorMsg, "");
-                }
-            }
         }
 
         private class VMData : ObservableObject
@@ -130,7 +117,11 @@ namespace ExViewer.Views
 
             [DebuggerBrowsable(DebuggerBrowsableState.Never)]
             private string _ErrorMsg;
-            public string ErrorMsg { get => _ErrorMsg; private set => Set(ref _ErrorMsg, value); }
+            public string ErrorMsg { get => _ErrorMsg; set => Set(ref _ErrorMsg, value); }
+
+            [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+            private bool _WebViewUnavailable;
+            public bool WebViewUnavailable { get => _WebViewUnavailable; set => Set(ref _WebViewUnavailable, value); }
 
             [DebuggerBrowsable(DebuggerBrowsableState.Never)]
             private bool _ShowErrorMsg;
@@ -151,32 +142,71 @@ namespace ExViewer.Views
         }
 
         private readonly VMData VM = new VMData();
+        private int resetVersion;
+        private ulong navigationId;
+        private bool isOpen;
+        private bool isResetting;
 
         public bool Succeed => VM.Succeed;
 
-        private void btnUseCookie_Click(object sender, RoutedEventArgs e)
+        private async void btnUseCookie_Click(object sender, RoutedEventArgs e)
         {
             VM.UseCookieLogOn = true;
-            reset();
+            await reset();
         }
 
-        private void btnUseWebpage_Click(object sender, RoutedEventArgs e)
+        private async void btnUseWebpage_Click(object sender, RoutedEventArgs e)
         {
             VM.UseCookieLogOn = false;
-            reset();
+            await reset();
         }
 
-        private async void reset()
+        private async Task reset()
         {
+            var version = ++resetVersion;
             VM.Reset();
-
             VM.ShowErrorMsg = false;
-            wv.NavigateToString("");
-            await Dispatcher.YieldIdle();
-            wv.Navigate(Client.LogOnUri);
+            VM.WebViewUnavailable = false;
+            wv.CoreWebView2?.Stop();
+            wv.CoreWebView2?.Navigate("about:blank");
+            if (VM.UseCookieLogOn)
+                return;
+
+            isResetting = true;
+            try
+            {
+                await wv.EnsureCoreWebView2Async();
+                if (!isOpen || version != resetVersion)
+                    return;
+
+                wv.CoreWebView2.Navigate("about:blank");
+                var cookies = await wv.CoreWebView2.CookieManager.GetCookiesAsync(Client.LogOnUri.ToString());
+                if (!isOpen || version != resetVersion)
+                    return;
+                foreach (var cookie in cookies)
+                    wv.CoreWebView2.CookieManager.DeleteCookie(cookie);
+
+                isResetting = false;
+                wv.CoreWebView2.Navigate(Client.LogOnUri.ToString());
+            }
+            catch (Exception ex)
+            {
+                if (!isOpen || version != resetVersion)
+                    return;
+                VM.WebViewUnavailable = wv.CoreWebView2 is null;
+                showError(VM.WebViewUnavailable
+                    ? Strings.Resources.Views.LogOnDialog.WebViewUnavailableMessage
+                    : ex.Message);
+                Telemetry.LogException(ex);
+            }
+            finally
+            {
+                if (version == resetVersion)
+                    isResetting = false;
+            }
         }
 
-        private async Task injectLogOnPage()
+        private async Task injectLogOnPage(string source)
         {
             var pass = AccountManager.CurrentCredential;
             var u = "";
@@ -184,73 +214,58 @@ namespace ExViewer.Views
             if (pass != null)
             {
                 pass.RetrievePassword();
-                u = escape(pass.UserName);
-                p = escape(pass.Password);
+                u = pass.UserName;
+                p = pass.Password;
             }
-            await wv.InvokeScriptAsync("eval", new[] { $@"
+            await wv.ExecuteScriptAsync($@"
 (function ()
 {{
+    if (location.href !== {JsonConvert.SerializeObject(source)}) return;
     var nL = document.LOGIN;
     if(!nL) return;
-	var nU = nL.UserName;
+    var nU = nL.UserName;
     if(!nU) return;
     var nP = nL.PassWord;
     if(!nP) return;
-    nU.value = '{u}';
-    nP.value = '{p}';
+    nU.value = {JsonConvert.SerializeObject(u)};
+    nP.value = {JsonConvert.SerializeObject(p)};
     nL.onsubmit = function(ev)
     {{
         var ret = ValidateForm();
         if (ret)
         {{
-            window.external.notify(nU.value + '\n' + nP.value);
+            window.chrome.webview.postMessage([nU.value, nP.value]);
         }}
         return ret;
     }}
 }})();
-" });
-            string escape(string value) => value.Replace(@"\", @"\\").Replace("'", @"\'");
+");
         }
 
-        private async Task injectOtherPage()
+        private async Task readLogOnCookies(int version, ulong navigation)
         {
-            if (VM.LogOn.IsExecuting)
+            if (!isOpen || version != resetVersion || navigation != navigationId
+                || VM.UseCookieLogOn || VM.LogOn.IsExecuting || VM.Succeed)
                 return;
 
-            var r = await wv.InvokeScriptAsync("eval", new[] { @"
-(function ()
-{
-    function getCookie(c_name)
-    {
-        if (document.cookie.length <= 0) return '';
-        var c_start = document.cookie.indexOf(c_name + '=');
-        if (c_start < 0) return '';
-        c_start = c_start + c_name.length + 1;
-        var c_end = document.cookie.indexOf(';', c_start);
-        if (c_end == -1) c_end = document.cookie.length;
-        return unescape(document.cookie.substring(c_start, c_end));
-    }
-    return (getCookie('ipb_member_id') + '\n' + getCookie('ipb_pass_hash'));
-})();
-" });
-            var data = r.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            if (data.Length != 2)
-            {
+            var cookies = await wv.CoreWebView2.CookieManager.GetCookiesAsync(Client.LogOnUri.ToString());
+            if (!isOpen || version != resetVersion || navigation != navigationId
+                || VM.UseCookieLogOn || VM.LogOn.IsExecuting || VM.Succeed)
                 return;
-            }
-            VM.MemberId = data[0];
-            VM.PassHash = data[1];
+
+            VM.MemberId = cookies.FirstOrDefault(c => c.Name == "ipb_member_id")?.Value;
+            VM.PassHash = cookies.FirstOrDefault(c => c.Name == "ipb_pass_hash")?.Value;
             VM.Igneous = "";
-            wv.NavigateToString("");
-            VM.LogOn.Execute();
+            if (VM.CanLogOn)
+            {
+                wv.CoreWebView2.Stop();
+                VM.LogOn.Execute();
+            }
         }
 
-        private void cd_Loaded(object sender, RoutedEventArgs e)
+        private async void cd_Opened(ContentDialog sender, ContentDialogOpenedEventArgs args)
         {
-        }
-
-        private void cd_Opened(ContentDialog sender, ContentDialogOpenedEventArgs args)
-        {
+            isOpen = true;
             if (Client.Current.NeedLogOn)
                 CloseButtonText = Strings.Resources.General.Exit;
             else
@@ -259,68 +274,82 @@ namespace ExViewer.Views
             VM.LogOnInfoBackup = Client.Current.GetLogOnInfo();
             Client.Current.ClearLogOnInfo();
 
-            reset();
+            await reset();
         }
 
-        private async void wv_DOMContentLoaded(WebView sender, WebViewDOMContentLoadedEventArgs args)
+        private void wv_CoreWebView2Initialized(WebView2 sender, CoreWebView2InitializedEventArgs args)
         {
-            Debug.WriteLine(args.Uri?.ToString() ?? "local string", "WebView");
-            if (args.Uri is null)
+            if (sender.CoreWebView2 is null)
+                return;
+            sender.CoreWebView2.Settings.AreHostObjectsAllowed = false;
+            sender.CoreWebView2.DOMContentLoaded += wv_DOMContentLoaded;
+        }
+
+        private static bool isForumUri(string source)
+            => Uri.TryCreate(source, UriKind.Absolute, out var uri)
+            && uri.Scheme == Client.ForumsUri.Scheme
+            && uri.Host == Client.ForumsUri.Host
+            && uri.Port == Client.ForumsUri.Port;
+
+        private static bool isLogOnUri(string source)
+            => isForumUri(source)
+            && new Uri(source).AbsolutePath == Client.LogOnUri.AbsolutePath
+            && new Uri(source).Query.TrimStart('?').Split('&').Contains("act=Login");
+
+        private async void wv_DOMContentLoaded(CoreWebView2 sender, CoreWebView2DOMContentLoadedEventArgs args)
+        {
+            if (!isOpen || isResetting || VM.UseCookieLogOn || args.NavigationId != navigationId || !isForumUri(sender.Source))
                 return;
 
-            if (args.Uri == Client.LogOnUri)
+            var version = resetVersion;
+            try
             {
-                await injectLogOnPage();
+                if (isLogOnUri(sender.Source))
+                    await injectLogOnPage(sender.Source);
+                await readLogOnCookies(version, args.NavigationId);
             }
-            else if (args.Uri.ToString().StartsWith(Client.LogOnUri.ToString()))
+            catch (Exception ex)
             {
-                await injectLogOnPage();
-                await injectOtherPage();
-            }
-            else if (args.Uri.Host == Client.LogOnUri.Host)
-            {
-                await injectOtherPage();
+                if (isOpen && version == resetVersion && !VM.UseCookieLogOn && !VM.Succeed)
+                    showError(ex.Message);
+                Telemetry.LogException(ex);
             }
         }
 
-        private void showErrorMsgInWv(string line1, string line2)
+        private void showError(string message)
         {
-            wv.NavigateToString($@"
-<html>
-<head>
-    <meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no' />
-</head>
-<body style='background:{Color((SolidColorBrush)Background)}; font-family: sans-serif;'>
-    <div>
-        <p style='color:red;white-space:pre-wrap;'>{System.Net.WebUtility.HtmlEncode(line1)}</p>
-        <p>
-            <small style='color:{Color((SolidColorBrush)Foreground)};white-space:pre-wrap;'>{System.Net.WebUtility.HtmlEncode(line2)}</small>
-        </p>
-    </div>
-</body>
-</html>");
-
+            VM.ErrorMsg = message;
+            VM.ShowErrorMsg = true;
         }
 
-        private void wv_NavigationFailed(object sender, WebViewNavigationFailedEventArgs e)
+        private void wv_NavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
         {
-            showErrorMsgInWv($"{System.Net.WebUtility.HtmlEncode(e.WebErrorStatus.ToString())} ({(int)e.WebErrorStatus})", e.Uri.ToString());
+            navigationId = args.NavigationId;
+            VM.ShowErrorMsg = false;
         }
 
-        private void wv_ScriptNotify(object sender, NotifyEventArgs e)
+        private void wv_NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
         {
-            var data = e.Value.Split(new[] { '\n' }, StringSplitOptions.None);
-            if (e.CallingUri.ToString().StartsWith(Client.LogOnUri.ToString()))
+            if (isOpen && !isResetting && !VM.UseCookieLogOn && args.NavigationId == navigationId && !args.IsSuccess
+                && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
+                showError(args.WebErrorStatus.ToString());
+        }
+
+        private void wv_WebMessageReceived(WebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
+        {
+            if (!isOpen || isResetting || VM.UseCookieLogOn || !isLogOnUri(args.Source)
+                || args.Source != sender.CoreWebView2.Source)
+                return;
+            try
             {
-                if (data.Length != 2)
+                var data = JsonConvert.DeserializeObject<string[]>(args.WebMessageAsJson);
+                if (data?.Length == 2)
                 {
-                    return;
+                    VM.UserName = data[0];
+                    VM.Password = data[1];
                 }
-
-                VM.UserName = data[0];
-                VM.Password = data[1];
-                return;
             }
+            catch (JsonException) { }
         }
 
         protected override Size MeasureOverride(Size availableSize)
@@ -334,7 +363,7 @@ namespace ExViewer.Views
             return base.MeasureOverride(availableSize);
         }
 
-        private void cd_PrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
+        private async void cd_PrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
         {
             args.Cancel = true;
             if (VM.UseCookieLogOn)
@@ -343,7 +372,7 @@ namespace ExViewer.Views
             }
             else
             {
-                reset();
+                await reset();
             }
         }
 
@@ -357,6 +386,13 @@ namespace ExViewer.Views
         {
             if (Succeed)
                 Hide();
+        }
+
+        private void cd_Closed(ContentDialog sender, ContentDialogClosedEventArgs args)
+        {
+            isOpen = false;
+            resetVersion++;
+            wv.Close();
         }
 
         private void cd_Closing(ContentDialog sender, ContentDialogClosingEventArgs args)
